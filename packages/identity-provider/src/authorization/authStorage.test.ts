@@ -9,9 +9,7 @@ import localforage from 'localforage';
 describe('authStorage', () => {
   let mockedStorage: jest.Mock<LocalForage>;
   beforeEach(() => {
-    mockedStorage = jest.fn<LocalForage, any[]>(() => {
-      return {} as LocalForage;
-    });
+    mockedStorage = jest.fn<LocalForage, any[]>(() => ({} as LocalForage));
   });
   test('get response is undefiend', async () => {
     mockedStorage.mockReturnValueOnce({

@@ -13,6 +13,7 @@ import { LOCAL_STORAGE_ROOT_DELEGATION_CHAIN, LOCAL_STORAGE_WEBAUTHN_ID } from '
 /**
  * This function is simply a simplification of the authentication flow.
  * It is NOT TO BE USED, but simply as guidance for how the flow could work.
+ *
  * @todo(codelemur) extract the relevant components into a controller
  */
 
