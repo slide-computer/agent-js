@@ -72,6 +72,14 @@ export interface HttpAgentOptions {
   // A surrogate to the global fetch function. Useful for testing.
   fetch?: typeof fetch;
 
+  // Additional options to pass along to fetch. Will not override fields that
+  // the agent already needs to set
+  // Should follow the RequestInit interface, but we intentially support non-standard fields
+  fetchOptions?: Record<string, unknown>;
+
+  // Additional options to pass along to fetch for the call API.
+  callOptions?: Record<string, unknown>;
+
   // The host to use for the client. By default, uses the same host as
   // the current page.
   host?: string;
@@ -162,6 +170,8 @@ export class HttpAgent implements Agent {
   private readonly _pipeline: HttpAgentRequestTransformFn[] = [];
   private _identity: Promise<Identity> | null;
   private readonly _fetch: typeof fetch;
+  private readonly _fetchOptions?: Record<string, unknown>;
+  private readonly _callOptions?: Record<string, unknown>;
   private _timeDiffMsecs = 0;
   private readonly _host: URL;
   private readonly _credentials: string | undefined;
@@ -181,6 +191,8 @@ export class HttpAgent implements Agent {
       this._credentials = options.source._credentials;
     } else {
       this._fetch = options.fetch || getDefaultFetch() || fetch.bind(global);
+      this._fetchOptions = options.fetchOptions;
+      this._callOptions = options.callOptions;
     }
     if (options.host !== undefined) {
       if (!options.host.match(/^[a-z]+:/) && typeof window !== 'undefined') {
@@ -282,10 +294,10 @@ export class HttpAgent implements Agent {
       request: {
         body: null,
         method: 'POST',
-        headers: {
+        headers: new Headers({
           'Content-Type': 'application/cbor',
           ...(this._credentials ? { Authorization: 'Basic ' + btoa(this._credentials) } : {}),
-        },
+        }),
       },
       endpoint: Endpoint.Call,
       body: submit,
@@ -301,6 +313,7 @@ export class HttpAgent implements Agent {
 
     const request = this._requestAndRetry(() =>
       this._fetch('' + new URL(`/api/v2/canister/${ecid.toText()}/call`, this._host), {
+        ...this._callOptions,
         ...transformedRequest.request,
         body,
       }),
@@ -325,8 +338,8 @@ export class HttpAgent implements Agent {
       );
     }
     const response = await request();
-    const responseText = await response.clone().text();
     if (!response.ok) {
+      const responseText = await response.clone().text();
       const errorMessage =
         `Server returned an error:\n` +
         `  Code: ${response.status} (${response.statusText})\n` +
@@ -371,10 +384,10 @@ export class HttpAgent implements Agent {
     let transformedRequest: any = await this._transform({
       request: {
         method: 'POST',
-        headers: {
+        headers: new Headers({
           'Content-Type': 'application/cbor',
           ...(this._credentials ? { Authorization: 'Basic ' + btoa(this._credentials) } : {}),
-        },
+        }),
       },
       endpoint: Endpoint.Query,
       body: request,
@@ -386,6 +399,7 @@ export class HttpAgent implements Agent {
     const body = cbor.encode(transformedRequest.body);
     const response = await this._requestAndRetry(() =>
       this._fetch('' + new URL(`/api/v2/canister/${canister.toText()}/query`, this._host), {
+        ...this._fetchOptions,
         ...transformedRequest.request,
         body,
       }),
@@ -412,10 +426,10 @@ export class HttpAgent implements Agent {
     const transformedRequest: any = await this._transform({
       request: {
         method: 'POST',
-        headers: {
+        headers: new Headers({
           'Content-Type': 'application/cbor',
           ...(this._credentials ? { Authorization: 'Basic ' + btoa(this._credentials) } : {}),
-        },
+        }),
       },
       endpoint: Endpoint.ReadState,
       body: {
@@ -445,6 +459,7 @@ export class HttpAgent implements Agent {
     const response = await this._fetch(
       '' + new URL(`/api/v2/canister/${canister}/read_state`, this._host),
       {
+        ...this._fetchOptions,
         ...transformedRequest.request,
         body,
       },
@@ -497,7 +512,7 @@ export class HttpAgent implements Agent {
       : {};
 
     const response = await this._requestAndRetry(() =>
-      this._fetch('' + new URL(`/api/v2/status`, this._host), { headers }),
+      this._fetch('' + new URL(`/api/v2/status`, this._host), { headers, ...this._fetchOptions }),
     );
 
     return cbor.decode(await response.arrayBuffer());

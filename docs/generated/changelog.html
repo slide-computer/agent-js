@@ -10,6 +10,78 @@
     <h1>Agent-JS Changelog</h1>
 
     <section>
+      <h2>Version x.x.x</h2>
+      <ul>
+        <li>
+          feat: adds keyType option for AuthClient, allowing users to specify whether to use an
+          ed25519 or ECDSAKey. This is important for custom storage providers that can't store
+          CryptoKey objects
+        </li>
+        <li>chore: removes a circular dependency on index for canisterStatus</li>
+        <li>chore: documents usage of fetch and fetchOptions for HttpAgent</li>
+      </ul>
+      <h2>Version 0.15.3</h2>
+      <ul>
+        <li>reverts the X-IC-Request-ID header until we coordinate cors support with icx-proxy</li>
+      </ul>
+      <h2>Version 0.15.2</h2>
+      <ul>
+        <li>
+          Corrects some dev dependencies incorrectly listed as dependencies in auth-client
+          package.json
+        </li>
+        <li>
+          introduces X-IC-Request-ID header to more easily identify retried requests. Also uses a
+          standard Headers constructor to manage headers
+        </li>
+        <ul>
+          Changes default stored key for auth-client to use ECDSAKey
+          <li>Also updates the storage interface types to support CryptoKeyPair</li>
+        </ul>
+        <li>updates link to identity-secp256k1 in docs site</li>
+      </ul>
+      <h2>Version 0.15.1</h2>
+      <ul>
+        <li>fixes a package configuration issue with @dfinity/identity-secp256k1</li>
+      </ul>
+      <h2>Version 0.15.0</h2>
+      <ul>
+        <li>
+          <em>Breaking change:</em> Moves Secp256k1KeyIdentity to its own package.
+          <pre>@dfinity/identity-secp256k1</pre>
+        </li>
+        <li>
+          <em>Breaking change:</em> Deprecates
+          <pre>@dfinity/authentication</pre>
+          . If you relied on the
+          <pre>isDelegationValid</pre>
+          check, it has been moved to
+          <pre>@dfinity/identity</pre>
+        </li>
+        <li>
+          Deprecates
+          <pre>@dfinity/identity-ledgerhq</pre>
+          . Use
+          <pre>@zondax/ledger-icp</pre>
+          instead.
+        </li>
+        <li>chore: links assets docs in index</li>
+        <li>chore: sets up new size-limit job for packages, in preparation for CI</li>
+      </ul>
+      <h2>Version 0.14.1</h2>
+      <ul>
+        <li>
+          feat: secp256k1 now supports a `fromSeedPhrase` method that will reproduce the same
+          identity across agent-js, dfx, and quill
+        </li>
+        <li>chore: configures unpkg to use esmodules</li>
+        <li>chore: removes unused lint shell script</li>
+        <li>chore: adds js-sha256 dependency to principal</li>
+        <li>
+          bug: fixes idlemanager initializing - now either requires createOptions.identity or
+          authClient.login to be called before starting idle timeout
+        </li>
+      </ul>
       <h2>Version 0.14.0</h2>
       <ul>
         <li>
@@ -28,8 +100,8 @@
           storage call
         </li>
         <li>
-          New package: @dfinity/assets. This package provides an asset manager to manage assets
-          on an assets canister.
+          New package: @dfinity/assets. This package provides an asset manager to manage assets on
+          an assets canister.
         </li>
         <li>bug: auth-client storage wrapper returns after resolve to avoid idb to be recreated</li>
       </ul>
@@ -133,7 +205,7 @@
           <pre>canisterStatus</pre>
           , to @agent/js. Canister status now allows you to query paths from the canister
           certificate with a simple interface, using the API from the<a
-            href="https://smartcontracts.org/docs/current/references/ic-interface-spec#state-tree-canister-information"
+            href="https://internetcomputer.org/docs/current/references/ic-interface-spec#state-tree-canister-information"
             >interface specification</a
           ><br />
           Comes with nicely configured options for

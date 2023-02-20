@@ -6,12 +6,13 @@ import {
   Signature,
   SignIdentity,
 } from '@dfinity/agent';
-import { isDelegationValid } from '@dfinity/authentication';
 import {
   Delegation,
   DelegationChain,
+  isDelegationValid,
   DelegationIdentity,
   Ed25519KeyIdentity,
+  ECDSAKeyIdentity,
 } from '@dfinity/identity';
 import { Principal } from '@dfinity/principal';
 import { IdleManager, IdleManagerOptions } from './idleManager';
@@ -31,6 +32,10 @@ export { IdbKeyVal, DBCreateOptions } from './db';
 const IDENTITY_PROVIDER_DEFAULT = 'https://identity.ic0.app';
 const IDENTITY_PROVIDER_ENDPOINT = '#authorize';
 
+const ECDSA_KEY_LABEL = 'ECDSA';
+const ED25519_KEY_LABEL = 'Ed25519';
+type BaseKeyType = typeof ECDSA_KEY_LABEL | typeof ED25519_KEY_LABEL;
+
 const INTERRUPT_CHECK_INTERVAL = 500;
 
 export const ERROR_USER_INTERRUPT = 'UserInterrupt';
@@ -42,11 +47,19 @@ export interface AuthClientCreateOptions {
   /**
    * An identity to use as the base
    */
-  identity?: SignIdentity;
+  identity?: SignIdentity | ECDSAKeyIdentity;
   /**
    * Optional storage with get, set, and remove. Uses {@link IdbStorage} by default
    */
   storage?: AuthClientStorage;
+  /**
+   * type to use for the base key
+   * @default 'ECDSA'
+   * If you are using a custom storage provider that does not support CryptoKey storage,
+   * you should use 'Ed25519' as the key type, as it can serialize to a string
+   */
+  keyType?: BaseKeyType;
+
   /**
    * Options to handle idle timeouts
    * @default after 30 minutes, invalidates the identity
@@ -160,6 +173,7 @@ export class AuthClient {
    * @see {@link SignIdentity}
    * @param options.storage Storage mechanism for delegration credentials
    * @see {@link AuthClientStorage}
+   * @param options.keyType Type of key to use for the base key
    * @param {IdleOptions} options.idleOptions Configures an {@link IdleManager}
    * @see {@link IdleOptions}
    * Default behavior is to clear stored identity and reload the page when a user goes idle, unless you set the disableDefaultIdleCallback flag or pass in a custom idle callback.
@@ -179,9 +193,16 @@ export class AuthClient {
       identity?: SignIdentity;
       /**
        * {@link AuthClientStorage}
-       * @description Optional storage with get, set, and remove. Uses {@link LocalStorage} by default
+       * @description Optional storage with get, set, and remove. Uses {@link IdbStorage} by default
        */
       storage?: AuthClientStorage;
+      /**
+       * type to use for the base key
+       * @default 'ECDSA'
+       * If you are using a custom storage provider that does not support CryptoKey storage,
+       * you should use 'Ed25519' as the key type, as it can serialize to a string
+       */
+      keyType?: BaseKeyType;
       /**
        * Options to handle idle timeouts
        * @default after 10 minutes, invalidates the identity
@@ -190,8 +211,9 @@ export class AuthClient {
     } = {},
   ): Promise<AuthClient> {
     const storage = options.storage ?? new IdbStorage();
+    const keyType = options.keyType ?? ECDSA_KEY_LABEL;
 
-    let key: null | SignIdentity = null;
+    let key: null | SignIdentity | ECDSAKeyIdentity = null;
     if (options.identity) {
       key = options.identity;
     } else {
@@ -202,10 +224,12 @@ export class AuthClient {
           const fallbackLocalStorage = new LocalStorage();
           const localChain = await fallbackLocalStorage.get(KEY_STORAGE_DELEGATION);
           const localKey = await fallbackLocalStorage.get(KEY_STORAGE_KEY);
-          if (localChain && localKey) {
+          // not relevant for Ed25519
+          if (localChain && localKey && keyType === ECDSA_KEY_LABEL) {
             console.log('Discovered an identity stored in localstorage. Migrating to IndexedDB');
             await storage.set(KEY_STORAGE_DELEGATION, localChain);
             await storage.set(KEY_STORAGE_KEY, localKey);
+
             maybeIdentityStorage = localChain;
             // clean up
             await fallbackLocalStorage.remove(KEY_STORAGE_DELEGATION);
@@ -217,9 +241,18 @@ export class AuthClient {
       }
       if (maybeIdentityStorage) {
         try {
-          key = Ed25519KeyIdentity.fromJSON(maybeIdentityStorage);
+          if (typeof maybeIdentityStorage === 'object') {
+            if (keyType === ED25519_KEY_LABEL && typeof maybeIdentityStorage === 'string') {
+              key = await Ed25519KeyIdentity.fromJSON(maybeIdentityStorage);
+            } else {
+              key = await ECDSAKeyIdentity.fromKeyPair(maybeIdentityStorage);
+            }
+          } else if (typeof maybeIdentityStorage === 'string') {
+            // This is a legacy identity, which is a serialized Ed25519KeyIdentity.
+            key = Ed25519KeyIdentity.fromJSON(maybeIdentityStorage);
+          }
         } catch (e) {
-          // Ignore this, this means that the localStorage value isn't a valid Ed25519KeyIdentity
+          // Ignore this, this means that the localStorage value isn't a valid Ed25519KeyIdentity or ECDSAKeyIdentity
           // serialization.
         }
       }
@@ -227,10 +260,14 @@ export class AuthClient {
 
     let identity = new AnonymousIdentity();
     let chain: null | DelegationChain = null;
-
     if (key) {
       try {
         const chainStorage = await storage.get(KEY_STORAGE_DELEGATION);
+        if (typeof chainStorage === 'object' && chainStorage !== null) {
+          throw new Error(
+            'Delegation chain is incorrectly stored. A delegation chain should be stored as a string.',
+          );
+        }
 
         if (options.identity) {
           identity = options.identity;
@@ -252,14 +289,29 @@ export class AuthClient {
         key = null;
       }
     }
-    const idleManager = options.idleOptions?.disableIdle
-      ? undefined
-      : IdleManager.create(options.idleOptions);
+    let idleManager: IdleManager | undefined = undefined;
+    if (options.idleOptions?.disableIdle) {
+      idleManager = undefined;
+    }
+    // if there is a delegation chain or provided identity, setup idleManager
+    else if (chain || options.identity) {
+      idleManager = IdleManager.create(options.idleOptions);
+    }
 
     if (!key) {
       // Create a new key (whether or not one was in storage).
-      key = Ed25519KeyIdentity.generate();
-      await storage.set(KEY_STORAGE_KEY, JSON.stringify(key));
+      if (keyType === ED25519_KEY_LABEL) {
+        key = await Ed25519KeyIdentity.generate();
+        await storage.set(KEY_STORAGE_KEY, JSON.stringify((key as Ed25519KeyIdentity).toJSON()));
+      } else {
+        if (options.storage && keyType === ECDSA_KEY_LABEL) {
+          console.warn(
+            `You are using a custom storage provider that may not support CryptoKey storage. If you are using a custom storage provider that does not support CryptoKey storage, you should use '${ED25519_KEY_LABEL}' as the key type, as it can serialize to a string`,
+          );
+        }
+        key = await ECDSAKeyIdentity.generate();
+        await storage.set(KEY_STORAGE_KEY, (key as ECDSAKeyIdentity).getKeyPair());
+      }
     }
 
     return new this(identity, key, chain, storage, idleManager, options);
@@ -270,7 +322,7 @@ export class AuthClient {
     private _key: SignIdentity,
     private _chain: DelegationChain | null,
     private _storage: AuthClientStorage,
-    public readonly idleManager: IdleManager | undefined,
+    public idleManager: IdleManager | undefined,
     private _createOptions: AuthClientCreateOptions | undefined,
     // A handle on the IdP window.
     private _idpWindow?: Window,
@@ -317,6 +369,17 @@ export class AuthClient {
     this._identity = DelegationIdentity.fromDelegation(key, this._chain);
 
     this._idpWindow?.close();
+    if (!this.idleManager) {
+      const idleOptions = this._createOptions?.idleOptions;
+      this.idleManager = IdleManager.create(idleOptions);
+
+      if (!idleOptions?.onIdle && !idleOptions?.disableDefaultIdleCallback) {
+        this.idleManager?.registerCallback(() => {
+          this.logout();
+          location.reload();
+        });
+      }
+    }
     onSuccess?.();
     this._removeEventListener();
     delete this._idpWindow;
